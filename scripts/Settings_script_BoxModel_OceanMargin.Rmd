@@ -1,0 +1,251 @@
+---
+title: "Settings_BoxModel_OceanMargin"
+author: "Anne Kruijt"
+date: "25 januari 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+This code was developed by Karline Soetaert and Anne Kruijt, to simulate the transfer of carbon and potentially other chemical tracers along the coastal shelf, represented by a flexible number of boxes. 
+
+The original code is split into several individual scripts, each for a distinct step within the set-up and execution of the code.
+This script contains the set-up of the model domain and the boundary conditions.
+
+
+## Ik moet goed gaan nadenken over het resolutie vraagstuk: als ik nx omhoog doe gaat het fout bij de calcificatie in het model. Waarom? is die niet goed gekoppeld aan daadwerkelijke hoeveelheid beschikbare bouwstenen? Raken de 'volumes' van de boxen vol? Ik moet hier met Karline over praten, maar zal iig:
+- de resolutie omlaag doen van 10 naar 5, kijken wat dat doet: GEEN ERROR
+- resolutie met 1 of 2 boxen omhoog (let op, de verdeling in bodembox-dieptes moet ook aangepast): WEL EEN ERROR
+- rates naar p/ms doen ipv /s, kijken hoe dat de boel beinvloedt: WEL EEN ERROR
+- diepte surface box aanpassen van 5 naar 10
+- resolutie hetzelfde en area omhoog: GEEN ERROR (bij verdubbeling area)
+
+##Packages used
+```{r, message = FALSE}
+require(rootSolve)
+require(deSolve)
+
+list.of.packages <- c("seacarb","ggplot2","grid")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+invisible(lapply(list.of.packages, library, character.only = TRUE))
+rm(list.of.packages,new.packages)
+```
+
+## Senario model settings
+Here the dimensions, bathymetry and environmental conditions (temperature, salinity, light) of the modelled ocean margin can be set.
+To simulate carbon transfer across the global oceanic margin we attribute modern day estimates of global ocean margin dimensions. 
+The ocean margin bathymetry and environmental settings are prescribed separately, so the user needs to decide what a realistic combination between box depth, area and enviromental parameters would be, and be aware of the effect of choices made below.
+
+
+```{r settings }
+sec_to_year <- 60*60*24*365
+
+# Overal Settings: Global ocean margin 
+Area = 5.00e6 #7e6#2.6e7   # global coastal surface area km2, from Milliman 1993
+Qriver =  7.41e3#1e4  #1*40e3/sec_to_year # river discharge flow rate [km3/s]
+Eh =  0#1.106797e-04 #0#1e-2# this value gives an effect#250*10**(-9) #from the Soetaert and Herman paper, estimate for Westerschelde. How to enforce constant horizontal dispersion. Equal in size in seaward and landward direction?  # horizontal dispersion [km3/s] 
+
+
+# Bathymetry
+# CODE BELOW ASSUMES 3 DEPTH RANGES WITH 3 DISTINCT ENVIRONMENTS
+# --> simulated environment for testing calcification: warm sea, surface boxes 5 m deep. Bottom boxes divided into three steps: first part bottom boxes 10 m deep, next part 50 m deep, last part 140 m
+d_surf = 5  # in m
+d_bottom_s = 10  # where corals grow
+d_bottom_m = 50
+d_bottom_d = 140
+
+#setting fraction of ocean margin for each depth range
+bs <- 1/10#1/5 #bottom shallow
+bm <- 4/10#2/5 #bottom middle
+bd <-  5/10#2/5 #bottom deep
+
+#dividing bottom boxes into three temperature regions
+Ts = 26#18 #26 # degrees Celcius
+Tbs = 25#17 #25 
+Tbm = 20#12 #20
+Tbd = 15#7 #15
+
+#Light settings
+E0 = 10 # surface light, mol quanta/m2/day
+kpar = 0.3 # or 0.5 for coastal waters? 
+
+Envparms <- c(Ts, Tbs, Tbm, Tbd, E0, kpar)
+
+## Calculating the settings for each box, based on prescribed boxnumer
+# --> determining the amount of boxes for each depth range
+# --> --> assumption coral reefs only 1/50th of the total margin area.
+# --> --> --> For this nx should be multiple of 5. the first 1/5th of the boxes will be coralreef depth, and in the calcification code itself, we further multiply by 1/10 to arrive at an appropriate coral cover.
+
+
+Box_settings <- function(nx, p){
+  
+  #Salinity
+  S = cbind(c(5, seq(from=25, to=35, length.out=nx + 1)), seq(from=30, to=35, length.out=nx +2)) # salinity matrix, first colum representing surface boxes, second column bottom boxes
+#S = cbind(seq(from=5, to=35, length.out=nx + 2), seq(from=30, to=35, length.out=nx +2))
+  
+  #Temperature
+  with(as.list(p),{
+  Temp_surf <- c(rep(Ts, times =nx))
+  Temp_bottom <- c(rep(Tbs, times =nx*bs), rep(Tbm, times = nx*bm), rep(Tbd, times = nx*bd))
+  Temp <- c(Temp_surf, Temp_bottom)
+  
+  #Light, average over box depth    
+  z <- seq(0, (d_bottom_d+d_surf+10), by=1)   # depth in meters; make sure the z range is at least as large as the maximum depth of the model environment
+  #   for (i in z ){
+  # E <- E0 * exp(-kpar *z)
+  # E_s <- c(rep(mean(E[0: (d_surf)]), times =nx)) 
+  # E_bs <- c(rep(mean(E[((d_surf+1): (d_bottom_s+d_surf))]), times =nx/5))
+  # E_bm <- c(rep(mean(E[((d_surf+d_bottom_s+1): (d_bottom_m+d_surf))]), times =2*(nx/5)))
+  # E_bd <- c(rep(mean(E[((d_surf+d_bottom_m+1): (d_bottom_d+d_surf))]), times =2*(nx/5)))
+  # Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
+  #   }
+  
+  #Light that reaches bottom of box
+  for (i in z ){
+  E <- E0 * exp(-kpar *z)
+  E_s <- c(rep(E[d_surf], times =nx)) 
+  E_bs <- c(rep(E[(d_bottom_s+d_surf)], times =nx*bs))
+  E_bm <- c(rep(E[(d_bottom_m+d_surf)], times =nx*bm))
+  E_bd <- c(rep(E[(d_bottom_d+d_surf)], times =nx*bd))
+  Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
+  }
+  
+  #depths in m
+  Depth_b <- c(rep(d_bottom_s, times = nx*bs), rep(d_bottom_m, times = nx*bm),rep(d_bottom_d, times = nx*bd) )
+  Depths <- cbind(d_surf, Depth_b)
+  
+  #Volume (recalculate to km3, this unit is needed for the calculation of flows in hydrodynamics-script)
+  Vsurf <- c(rep(d_surf/1000*(Area/nx)))
+  Vbottom <-c(rep(d_bottom_s/1000*(Area/nx), times = nx*bs), rep(d_bottom_m/1000*(Area/nx), times = nx*bm),rep(d_bottom_d/1000*(Area/nx), times = nx*bd) )
+  BoxVolume <- cbind(Vsurf, Vbottom)
+  
+  list('Temp'=Temp, 'Ebox' = Ebox, 'BoxVolume'= BoxVolume, 'S'= S, "Depths" = Depths)
+  
+  })
+}
+
+# #dividing bottom boxes into three temperature regions
+# Ts = 26 # degrees Celcius
+# Tbs = 25 
+# Tbm = 20
+# Tbd = 15
+# 
+# #Light settings
+# E0 = 10 /(24*60*60) # surface light, mol quanta/m2/s
+# kpar = 0.5 # coastal waters
+# 
+# Envparms <- c(Ts, Tbs, Tbm, Tbd, E0, kpar)
+# 
+# ## Calculating the settings for each box, based on prescribed boxnumer
+# # --> determining the amount of boxes for each depth range
+# # --> --> assumption coral reefs only 1/50th of the total margin area.
+# # --> --> --> For this nx should be multiple of 5. the first 1/5th of the boxes will be coralreef depth, and in the calcification code itself, we further multiply by 1/10 to arrive at an appropriate coral cover.
+# 
+# 
+# Box_settings <- function(nx, p){
+#   
+#   #Salinity
+#   S = cbind(c(5, seq(from=25, to=35, length.out=nx + 1)), seq(from=30, to=35, length.out=nx +2)) # salinity matrix, first colum representing surface boxes, second column bottom boxes
+# #S = cbind(seq(from=5, to=35, length.out=nx + 2), seq(from=30, to=35, length.out=nx +2))
+#   
+#   #Temperature
+#   with(as.list(p),{
+#   Temp_surf <- c(rep(Ts, times =nx))
+#   Temp_bottom <- c(rep(Tbs, times =nx/5), rep(Tbm, times =2*(nx/5)), rep(Tbd, times =2*(nx/5)))
+#   Temp <- c(Temp_surf, Temp_bottom)
+#   
+#   #Light, average over box depth    
+#   z <- seq(0, 150, by=1)   # depth in meters
+#   #   for (i in z ){
+#   # E <- E0 * exp(-kpar *z)
+#   # E_s <- c(rep(mean(E[0: (d_surf)]), times =nx)) 
+#   # E_bs <- c(rep(mean(E[((d_surf+1): (d_bottom_s+d_surf))]), times =nx/5))
+#   # E_bm <- c(rep(mean(E[((d_surf+d_bottom_s+1): (d_bottom_m+d_surf))]), times =2*(nx/5)))
+#   # E_bd <- c(rep(mean(E[((d_surf+d_bottom_m+1): (d_bottom_d+d_surf))]), times =2*(nx/5)))
+#   # Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
+#   #   }
+#   
+#   #Light that reaches bottom of box
+#   for (i in z ){
+#   E <- E0 * exp(-kpar *z)
+#   E_s <- c(rep(E[d_surf], times =nx)) 
+#   E_bs <- c(rep(E[(d_bottom_s+d_surf)], times =nx/5))
+#   E_bm <- c(rep(E[(d_bottom_m+d_surf)], times =2*(nx/5)))
+#   E_bd <- c(rep(E[(d_bottom_d+d_surf)], times =2*(nx/5)))
+#   Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
+#     }
+#   
+#   #Volume (recalculate to km3, this unit is needed for the calculation of flows in hydrodynamics-script)
+#   Vsurf <- c(rep(d_surf/1000*(Area/nx)))
+#   Vbottom <-c(rep(d_bottom_s/1000*(Area/nx), times = nx/5), rep(d_bottom_m/1000*(Area/nx), times = 2*(nx/5)),rep(d_bottom_d/1000*(Area/nx), times = 2*(nx/5)) )
+#   BoxVolume <- cbind(Vsurf, Vbottom)
+#   
+#   list('Temp'=Temp, 'Ebox' = Ebox, 'BoxVolume'= BoxVolume, 'S'= S)
+#   
+#   })
+#}
+
+```
+
+
+## Determining appropriate river DIC and TA, based, knowing pH should be 7.6 and salinity of water low (e.g. 5)
+```{r Boundary codition determination }
+
+RiverTA = 895
+RiverDIC = 910
+carb_solverriv<-carb(flag =15, (RiverTA/1000000), (RiverDIC/1000000), S=5)
+pHriv <- as.numeric(carb_solverriv["pH"])
+
+```
+
+```{r calculating and visualising the box-conditions}
+
+## Calculating boxconditions
+nx =  10
+Boxconditions <-Box_settings(nx,Envparms)
+Temp <- Boxconditions[["Temp"]]  # in deg C
+E <- Boxconditions[["Ebox"]]  # in mol quanta/m2/s
+BoxV <- Boxconditions[["BoxVolume"]] # in km3
+S <- Boxconditions[["S"]]
+
+## checking all box conditions
+Bathymetry <- c(rep(d_bottom_s, times = nx*bs), rep(d_bottom_m, times = (nx*bm)),rep(d_bottom_d, times = (nx*bd)) )*(-1)  # in meters
+x <-seq(1,nx)
+plot(x, Bathymetry, type = 'l', main= "Ocean margin bathymetry", xlab = "Box number", ylab= "Depth")
+plot(x, Temp[1:nx], type = "l", main = "Box temperatures", ylab ="Temperature", col="red")
+lines(x,Temp[(nx+1):(2*nx)],col="green")
+plot(x, S[2:(nx+1), 1], type ="l", main = "Box salinities", ylab = "Salinity", col = "red")
+lines(x, S[2:(nx+1), 2],col="green")
+
+```
+
+
+```{r Temperature scenarios}
+
+# function to determine the volume fraction of each depth environment
+VolumeFractionFun <- function(BoxV){
+  TotalV <- sum(BoxV)
+  fractionSurf <- sum(BoxV[,1])/TotalV
+  fractionBs <- sum(BoxV[1:(nx*bs),2])/TotalV
+  fractionBm <- sum(BoxV[(nx*bs+1): (nx*bm+ nx*bs),2])/TotalV
+  fractionBd <- sum(BoxV[(nx*bs+nx*bm+1):(nx),2])/TotalV
+  list('Surface fraction'=fractionSurf, 'Shallow bottom fraction' = fractionBs, 'Middle bottom fraction'= fractionBm, 'Deep bottom fraction'= fractionBd)
+}
+
+fracs <-VolumeFractionFun(BoxV)
+
+Tsmax <- 26
+Tbsmax <-25
+Tbmmax <-20
+Tbdmax <-15
+
+AvTemp <- Tsmax*fracs$`Surface fraction` + Tbsmax* fracs$`Shallow bottom fraction` + Tbmmax*fracs$`Middle bottom fraction` + Tbdmax*fracs$`Deep bottom fraction`
+AvTemp_min3 <- (Tsmax-3)*fracs$`Surface fraction` + (Tbsmax-3)* fracs$`Shallow bottom fraction` + (Tbmmax-3)*fracs$`Middle bottom fraction` + (Tbdmax-3)*fracs$`Deep bottom fraction`
+AvTemp_min7 <-(Tsmax-7)*fracs$`Surface fraction` + (Tbsmax-7)* fracs$`Shallow bottom fraction` + (Tbmmax-7)*fracs$`Middle bottom fraction` + (Tbdmax-7)*fracs$`Deep bottom fraction`
+
+```

@@ -1,0 +1,187 @@
+---
+title: "Calculator_tool"
+author: "Anne Kruijt"
+date: "23 november 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r calc reef calcification}
+
+# light formula
+Isurf <- 10 / (24*60*60) # mol quanta/m2/s
+kpar <- 0.3 # try this out, see how the f_light curve changes. Find value fitting for coastal waters
+z <-10
+Iz<-  Isurf*exp(-kpar*z)
+Ik <- Isurf/100# Light at compensation depth, in mol/m2/s #can vary greatly between species
+
+# Temperature formula
+SST <- 26
+Topt <- 26
+sigma <- 3.3
+mu <- 26
+
+
+SST2 <- c(seq(from=0, to =40))
+z2<- c(seq(0, 30))
+Iz2 <- Isurf*exp(-kpar*z2)
+f_light2 <- tanh(Iz2/Ik)
+f_light <- tanh(Iz/Ik)
+
+f_temp_gaussian <- (1/(sigma*sqrt(2*pi))*exp(-1/2*((SST2-mu)/sigma)**2))
+f_temp_gaussian_opt <- (1/(sigma*sqrt(2*pi))*exp(-1/2*((SST-mu)/sigma)**2))
+c <- 1/f_temp_gaussian_opt
+fnew_tem <- c* f_temp_gaussian
+plot(f_temp_gaussian, type="l", xlab= 'Temperature', ylab = "fraction")
+plot(fnew_tem, type="l", xlab= 'Temperature [degrees Celcius]', ylab = "fraction")
+plot(f_light2, type="l", xlab= 'depth [m]', ylab = "fraction")
+
+
+
+```
+
+```{r pelagic calc}
+Ratio_pp_cocc <- 0.1
+Ratio_max <- 0.8
+K_max <- 0.4
+
+Omega_calc <- c(seq(1, 4, 0.1))
+f_omegacalc <- (Omega_calc-1)/(K_max+ (Omega_calc-1))
+
+plot(Omega_calc, f_omegacalc, type="l", xlab= 'omega calcite', ylab = "fraction")
+
+###########
+G_POC_pelagic <- 50 # mgC/m2/day
+unit_conversion<- (1/12.01)/(24*60*60) # divide by molar weight and by seconds in a day to get unit mmol/m2/s
+
+Gpelagic <- Ratio_pp_cocc * Ratio_max * G_POC_pelagic*unit_conversion * f_omegacalc
+plot(Omega_calc, Gpelagic,type="l", main= "Pelagic calcification", xlab = "omega calcite", ylab = 'calcification rate [ mmol/m2/s]')
+
+Rate_max <- 1.04/(60*60*24) # mmol/m2/s, 1.04 mmol/m2/yr is average from continental shelf estimates by Milliman 1993, 2.7 is the estimate for extra-tropical shelf sediments
+K_max <- 0.4
+G_PIC_benthic <- Rate_max * f_omegacalc 
+plot(Omega_calc, G_PIC_benthic,type="l", main= "Benthic calcification", xlab = "omega calcite", ylab = 'calcification rate [ mmol/m2/s]')
+
+```
+
+```{r calculation}
+SST_case <- 26
+z_case <- 10
+Izcase <- Isurf*exp(-kpar*z_case)
+Omega_arag_case <- c(seq(1, 5, 0.1))
+f_light <- 1 #tanh(Izcase/Ik)
+f_temp <- c*(1/(sigma*sqrt(2*pi))*exp(-1/2*((SST_case-mu)/sigma)**2))
+
+# Silverman formula parameters
+kp <- 1
+Areef <- 0.3 # for eilat reef, between 0-1
+kr <-38
+Gi <- (24/1000)*(-0.0177*SST_case**2+1.4697*SST_case + 14.893)*(Omega_arag_case -1)**(0.0628*SST_case+0.0985)
+
+Greef1 <- 15.5*Omega_arag_case + 41.69   * f_light * f_temp  #mmol/m2/day
+Greef2 <-Areef*kr*Gi* exp(-(kp*(SST_case-Topt)/Omega_arag_case**2)**2) * f_light
+
+
+plot(Omega_arag_case, Greef1,type="l", main= "Eyre formula", xlab = "omega", ylab = 'calcification [ mmol/m2/day]')
+plot(Omega_arag_case, Greef2, type= "l", main = "Reef calcification", xlab = "omega aragonite", ylab = 'calcification [ mmol/m2/day]')
+
+Aglobal<- 1000
+GlobalGreef1 <- Greef1 *Aglobal
+GlobalGreef2 <- Greef2 *Aglobal
+
+```
+
+```{r dissolution}
+kdiss <- 0.1 # per day
+etadiss <- 4.5 #dimensionless
+Diss_rate <- function(PIC_conc, Omega_calc){
+      
+  Rdiss <- PIC_conc*kdiss*(1-Omega_calc)**etadiss  # rate in mmol/m3/day
+  Rdiss <- Rdiss/(24*60*60) # conversion to rate in mmol/m3/s
+
+  return(Rdiss)}
+
+Omega_calc_case <- c(seq(-4, 4, 0.1))
+len <- length(Omega_calc_case)
+PIC_case <- c(rep(100, times = len ))
+
+Dissrate_case <- Diss_rate(PIC_case, Omega_calc_case)
+plot(Omega_calc_case, Dissrate_case, type="l", main= "water column dissolution", xlab = "omega calcite", ylab = 'dissolution [mmol/m3/s]')
+
+```
+
+```{r carbonate system calculator}
+TA <- c(2000, 2000, 2000, 2000)#, 2000, 2000)
+DIC <- c(1800, 1800, 1800, 1800) #, 1800, 1800)
+S1 <- 35
+ratio <- 0.01028/35
+factordiffworld <- 1
+Ca1 <-  ratio * S1 * factordiffworld
+
+carb_solver <- carb(flag =15, var1 = TA/1000000, var2 = DIC/1000000, S = S1, T = 20, P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l")
+pCO2water <- carb_solver[,"pCO2"]
+Omega_Arag_water <- as.numeric(carb_solver[, "OmegaAragonite"])
+
+Sal = c(35,35,35,35)# salinity of the boxes, to use in the carbonate solver
+ratio <- 0.01028/35  # based on: Millero (2008)
+factordiffworld <- 1  # if simulating a different type of world, with different ca-salinity ratio, it can be adjusted here
+Ca <-  ratio * Sal * factordiffworld # Calcium concentration of the boxes, to use in the carbonate solver
+Temp <- c(20,20,20,20)
+OmegaArag <- rep(NA, length(TA))
+OmegaCalc <- rep(NA, length(TA))
+pCO2_box <- rep(NA, length(TA))
+pH_box <- rep(NA, length(TA))
+
+for (i in 1:length(TA)){
+  carb_solv <- pCa(flag=15, var1= TA[i]/1000000, var2=DIC[i]/1000000, Ca = Ca[i], S=Sal[i], T=Temp[i], P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with normal Ca concentration
+  OmegaArag[i] <- as.numeric(carb_solv[, "OmegaAragonite"])[2]
+  OmegaCalc[i] <- as.numeric(carb_solv[, "OmegaCalcite"])[2]
+  pCO2_box[i] <- carb_solv[,"pCO2"][2]
+  pH_box[i] <- carb_solver[,"pH"][2]
+}
+
+for (i in 1:length(TA)){
+  carb_solv <- pCa(flag=15, var1= TA[i]/1000000, var2=DIC[i]/1000000, Ca = Ca[i], S=Sal[i], T=Temp[i], P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with normal Ca concentration
+  OmegaArag[i] <- as.numeric(carb_solv[, "OmegaAragonite"])[2]
+  OmegaCalc[i] <- as.numeric(carb_solv[, "OmegaCalcite"])[2]
+  pCO2_box[i] <- carb_solv[,"pCO2"][2]
+  pH_box[i] <- carb_solver[,"pH"][2]
+}
+
+
+pCa(flag=15, var1= TA/1000000, var2=DIC/1000000, Ca = 0.01028, S=S1, T=20, P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with normal Ca concentration
+pCa(flag=15, var1=TA/1000000, var2=DIC/1000000, Ca=0.01028/2, S=35, T=20, P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with 0.5 * Ca concentration
+
+
+carb_solver2 <- pCa(flag =15, var1 = TA/1000000, var2 = DIC/1000000, Ca = Ca1, S = S1 )
+pCO2water2 <- carb_solver2[,"pCO2"]
+Omega_Arag_water2 <- as.numeric(carb_solver2[, "OmegaAragonite"])
+print(pCO2water)
+print(pCO2water2)
+print(Omega_Arag_water)
+print(Omega_Arag_water2[2])
+
+```
+
+```{r asymptote}
+# using the formula described in J.Middelburg's book: Marine Carbon Biogeochemistry: A Primer for Earth System Scientists, figure 2.4
+
+a <- 0.59
+b <- 0.0633
+Temp <- seq(1,40,1)
+Topt <- 26
+width <- 25
+
+  
+mu <- a*exp(b*Temp)*(1-((Temp-Topt)/(width/2))**2)
+mu <- pmax(mu, 0)
+plot(Temp, mu, type = "l")
+# from mu to fraction:
+c <- 1/(max(mu))
+fraction <- c*mu
+plot(Temp, fraction, type ="l", xlab = 'Temperature [degrees Celcius]')
+max(fraction)
+```
