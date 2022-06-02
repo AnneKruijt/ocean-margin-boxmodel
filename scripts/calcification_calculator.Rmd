@@ -9,34 +9,37 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# TODO: 
+- write a short intro to this script
+- think about the naming (make things intuitive)
+- think about changing index i in loops to more intuitive name
+- do all the style things: make spaces at the right locations
+
 ```{r calc reef calcification}
-"adding a comment for testing"
 
 
-# light formula
-Isurf <- 10 / (24*60*60) # mol quanta/m2/s
+##--- Light dependency ---##
+Isurf <- 10 / (24 * 60 * 60) # mol quanta/m2/s
 kpar <- 0.3 # try this out, see how the f_light curve changes. Find value fitting for coastal waters
-z <-10
-Iz<-  Isurf*exp(-kpar*z)
-Ik <- Isurf/100# Light at compensation depth, in mol/m2/s #can vary greatly between species
+z <-10 #depth
+z2 <- c(seq(0, 30))
+Iz<-  Isurf * exp(-kpar * z)
+Ik <- Isurf / 100# Light at compensation depth, in mol/m2/s #can vary greatly between species
+f_light <- tanh(Iz / Ik)
+f_light2 <- tanh(Iz2 / Ik)
 
-# Temperature formula
+#--- Temperature dependency ---#
 SST <- 26
+SST2 <- c(seq(from=0, to =40))
 Topt <- 26
 sigma <- 3.3
 mu <- 26
+f_temp_gaussian <- (1 / (sigma * sqrt(2 * pi)) * exp(-1 / 2 * ((SST2 - mu) / sigma) ** 2))
+f_temp_gaussian_opt <- (1 / (sigma * sqrt(2 * pi)) * exp(-1 / 2 * ((SST - mu) / sigma) ** 2))
+c <- 1 / f_temp_gaussian_opt
+fnew_tem <- c * f_temp_gaussian
 
-
-SST2 <- c(seq(from=0, to =40))
-z2<- c(seq(0, 30))
-Iz2 <- Isurf*exp(-kpar*z2)
-f_light2 <- tanh(Iz2/Ik)
-f_light <- tanh(Iz/Ik)
-
-f_temp_gaussian <- (1/(sigma*sqrt(2*pi))*exp(-1/2*((SST2-mu)/sigma)**2))
-f_temp_gaussian_opt <- (1/(sigma*sqrt(2*pi))*exp(-1/2*((SST-mu)/sigma)**2))
-c <- 1/f_temp_gaussian_opt
-fnew_tem <- c* f_temp_gaussian
+##--- Plotting the functions ---##
 plot(f_temp_gaussian, type="l", xlab= 'Temperature', ylab = "fraction")
 plot(fnew_tem, type="l", xlab= 'Temperature [degrees Celcius]', ylab = "fraction")
 plot(f_light2, type="l", xlab= 'depth [m]', ylab = "fraction")
@@ -104,7 +107,8 @@ Diss_rate <- function(PIC_conc, Omega_calc){
   Rdiss <- PIC_conc*kdiss*(1-Omega_calc)**etadiss  # rate in mmol/m3/day
   Rdiss <- Rdiss/(24*60*60) # conversion to rate in mmol/m3/s
 
-  return(Rdiss)}
+  return(Rdiss)
+  }
 
 Omega_calc_case <- c(seq(-4, 4, 0.1))
 len <- length(Omega_calc_case)
@@ -145,7 +149,7 @@ for (i in 1:length(TA)){
   pH_box[i] <- carb_solver[,"pH"][2]
 }
 
-for (i in 1:length(TA)){
+for (i in seq_len(length(TA))){
   carb_solv <- pCa(flag=15, var1= TA[i]/1000000, var2=DIC[i]/1000000, Ca = Ca[i], S=Sal[i], T=Temp[i], P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with normal Ca concentration
   OmegaArag[i] <- as.numeric(carb_solv[, "OmegaAragonite"])[2]
   OmegaCalc[i] <- as.numeric(carb_solv[, "OmegaCalcite"])[2]
@@ -158,7 +162,7 @@ pCa(flag=15, var1= TA/1000000, var2=DIC/1000000, Ca = 0.01028, S=S1, T=20, P=0, 
 pCa(flag=15, var1=TA/1000000, var2=DIC/1000000, Ca=0.01028/2, S=35, T=20, P=0, Pt=0, Sit=0, pHscale="T", kf="pf", k1k2="l") # with 0.5 * Ca concentration
 
 
-carb_solver2 <- pCa(flag =15, var1 = TA/1000000, var2 = DIC/1000000, Ca = Ca1, S = S1 )
+carb_solver2 <- pCa(flag = 15, var1 = TA / 1000000, var2 = DIC / 1000000, Ca = Ca1, S = S1)
 pCO2water2 <- carb_solver2[,"pCO2"]
 Omega_Arag_water2 <- as.numeric(carb_solver2[, "OmegaAragonite"])
 print(pCO2water)
@@ -173,17 +177,17 @@ print(Omega_Arag_water2[2])
 
 a <- 0.59
 b <- 0.0633
-Temp <- seq(1,40,1)
+Temp <- seq(1, 40, 1)
 Topt <- 26
 width <- 25
 
   
-mu <- a*exp(b*Temp)*(1-((Temp-Topt)/(width/2))**2)
+mu <- a * exp(b * Temp) * (1 - (( Temp - Topt ) / (width / 2)) ** 2)
 mu <- pmax(mu, 0)
 plot(Temp, mu, type = "l")
 # from mu to fraction:
-c <- 1/(max(mu))
-fraction <- c*mu
-plot(Temp, fraction, type ="l", xlab = 'Temperature [degrees Celcius]')
+c <- 1 / ( max(mu) )
+fraction <- c * mu
+plot(Temp, fraction, type ="l", xlab = "Temperature [degrees Celcius]")
 max(fraction)
 ```
