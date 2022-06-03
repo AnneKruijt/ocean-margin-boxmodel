@@ -24,6 +24,8 @@ THIS script contains the set-up of the model domain and the boundary conditions.
 
 ##Packages used
 ```{r, message = FALSE}
+install.packages("docstring")
+library(docstring)
 require(rootSolve)
 require(deSolve)
 
@@ -36,58 +38,57 @@ rm(list.of.packages,new.packages)
 ```
 
 ## Senario model settings
-Here the dimensions, bathymetry and environmental conditions (temperature, salinity, light) of the modelled ocean margin can be set.
+
+Here the dimensions, bathymetry and environmental conditions (temperature, salinity, light) of the modelled ocean margin can be set. 
+
 To simulate carbon transfer across the global oceanic margin we attribute modern day estimates of global ocean margin dimensions. 
+
 The ocean margin bathymetry and environmental settings are prescribed separately, so the user needs to decide what a realistic combination between box depth, area and enviromental parameters would be, and be aware of the effect of choices made below.
 
 
 ```{r settings }
-sec_to_year <- 60 * 60 * 24 * 365
 
 ##---Overal Settings: Global ocean margin ---#
-Area = 5.00e6 #7e6#2.6e7   # global coastal surface area km2, from Milliman 1993
-Qriver =  7.41e3 #1e4  #1*40e3/sec_to_year # river discharge flow rate [km3/s]
-Eh =  0 #1.106797e-04 #0#1e-2# this value gives an effect#250*10**(-9) #from the Soetaert and Herman paper, estimate for Westerschelde. How to enforce constant horizontal dispersion. Equal in size in seaward and landward direction?  # horizontal dispersion [km3/s] 
+Area = 5.00e6 # [km2]
+Qriver =  7.41e3 # [km3/s]
+Eh =  0  # horizontal dispersion [km3/s]
 
 ##--- Bathymetry ---#
-# CODE BELOW ASSUMES 3 DEPTH RANGES WITH 3 DISTINCT ENVIRONMENTS
-# --> simulated environment for testing calcification: warm sea, surface boxes 5 m deep. Bottom boxes divided into three steps: first part bottom boxes 10 m deep, next part 50 m deep, last part 140 m
-d_surf = 5  # in m
+# Bathymetry is created by assuming three (increasing) depth ranges for the bottom boxes, each depth range with a distinct environment. Suggested settings for different environments can be found in separate excel file ("NAME").
+d_surf = 5  # [m]
 d_bottom_s = 10  # where corals grow
 d_bottom_m = 50
 d_bottom_d = 140
 
-#setting fraction of ocean margin for each depth range
+# Setting fraction of ocean margin for each depth range
 bs <- 1/10 #1/5 #bottom shallow
 bm <- 4/10 #2/5 #bottom middle
 bd <-  5/10 #2/5 #bottom deep
 
 ##--- Temperature settings ---#
-Ts = 26 # surface box temperature (deg Celcius)
+Ts = 26 # surface box temperature [deg Celcius]
 Tbs = 25 # bottom shallow
 Tbm = 20 # bottom middle
 Tbd = 15 # bottom deep
 
 ##--- Light settings ---#
-E0 = 10 # surface light, mol quanta/m2/day
+E0 = 10 # surface light, [mol quanta/m2/day]
 kpar = 0.3 # or 0.5 for coastal waters? 
 
 
 Envparms <- c(Ts, Tbs, Tbm, Tbd, E0, kpar)
 
-## Calculating the settings for each box, based on prescribed boxnumer
-# --> determining the amount of boxes for each depth range
-# --> --> assumption coral reefs only 1/50th of the total margin area.
-# --> --> --> For this nx should be multiple of 5. the first 1/5th of the boxes will be coralreef depth, and in the calcification code itself, we further multiply by 1/10 to arrive at an appropriate coral cover.
-
-
 Box_settings <- function(nx, p){
-  
-  #Salinity
-  S = cbind(c(5, seq(from=25, to=35, length.out=nx + 1)), seq(from=30, to=35, length.out=nx +2)) # salinity matrix, first colum representing surface boxes, second column bottom boxes
-#S = cbind(seq(from=5, to=35, length.out=nx + 2), seq(from=30, to=35, length.out=nx +2))
-  
-  #Temperature
+  #' @title Box settings
+  #' @description This function assigns the appropriate dimensions and environmental settings to each box of the model. These dimensions and environmental conditions have been given by the user.
+  #' @param x The number of boxes in the horizontal (nx)
+  #' @param y A list containing the environmental parameters to be assigned
+  #' @return A list with the items: temperature, light availability, volume, salinity, and depth of each box. Each item is itself a vector of lenght 2 * nx, containing the value of this item for each individual box
+
+  # Salinity
+  S = cbind(c(5, seq(from=25, to=35, length.out=nx + 1)), seq(from=30, to=35, length.out=nx +2)) # salinity matrix, first column representing surface boxes, second column bottom boxes
+
+  # Temperature
   with(as.list(p),{
   Temp_surf <- c(rep(Ts, times =nx))
   Temp_bottom <- c(rep(Tbs, times =nx*bs), rep(Tbm, times = nx*bm), rep(Tbd, times = nx*bd))
@@ -104,21 +105,22 @@ Box_settings <- function(nx, p){
   # Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
   #   }
   
-  #Light that reaches bottom of box
+  # Light that reaches bottom of box
   for (i in z ){
   E <- E0 * exp(-kpar *z)
   E_s <- c(rep(E[d_surf], times =nx)) 
   E_bs <- c(rep(E[(d_bottom_s+d_surf)], times =nx*bs))
   E_bm <- c(rep(E[(d_bottom_m+d_surf)], times =nx*bm))
   E_bd <- c(rep(E[(d_bottom_d+d_surf)], times =nx*bd))
-  Ebox <-c(E_s, E_bs, E_bm, E_bd) # mol quanta/m2/s
+  Ebox <-c(E_s, E_bs, E_bm, E_bd) # [mol quanta/m2/s]
   }
   
   # Depths in m
   Depth_b <- c(rep(d_bottom_s, times = nx*bs), rep(d_bottom_m, times = nx*bm),rep(d_bottom_d, times = nx*bd) )
   Depths <- cbind(d_surf, Depth_b)
   
-  # Volume (recalculate to km3, this unit is needed for the calculation of flows in hydrodynamics-script)
+  # Volume 
+  # recalculate to km3, this unit is needed for the calculation of flows in hydrodynamics-script
   Vsurf <- c(rep(d_surf/1000*(Area/nx)))
   Vbottom <-c(rep(d_bottom_s/1000*(Area/nx), times = nx*bs), rep(d_bottom_m/1000*(Area/nx), times = nx*bm),rep(d_bottom_d/1000*(Area/nx), times = nx*bd) )
   BoxVolume <- cbind(Vsurf, Vbottom)
@@ -194,5 +196,8 @@ Tbdmax <-15
 AvTemp <- Tsmax*fracs$`Surface fraction` + Tbsmax* fracs$`Shallow bottom fraction` + Tbmmax*fracs$`Middle bottom fraction` + Tbdmax*fracs$`Deep bottom fraction`
 AvTemp_min3 <- (Tsmax-3)*fracs$`Surface fraction` + (Tbsmax-3)* fracs$`Shallow bottom fraction` + (Tbmmax-3)*fracs$`Middle bottom fraction` + (Tbdmax-3)*fracs$`Deep bottom fraction`
 AvTemp_min7 <-(Tsmax-7)*fracs$`Surface fraction` + (Tbsmax-7)* fracs$`Shallow bottom fraction` + (Tbmmax-7)*fracs$`Middle bottom fraction` + (Tbdmax-7)*fracs$`Deep bottom fraction`
+
+
+sec_to_year <- 60 * 60 * 24 * 365
 
 ```
